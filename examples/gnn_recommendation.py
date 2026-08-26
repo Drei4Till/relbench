@@ -279,5 +279,18 @@ if "test" in eval_loaders_dict:
     test_pred = test(*eval_loaders_dict["test"])
     test_metrics = task.evaluate(test_pred, task.get_table("test"))
     print(f"Best test metrics: {test_metrics}")
+    best_metrics_dict = {
+            "args": vars(args),
+            "val_metrics": val_metrics,
+            "test_metrics": test_metrics
+        }
+    output_path = os.path.join("results", args.dataset, args.task)
+    os.makedirs(output_path, exist_ok=True)
+
+    file_path = os.path.join(output_path, str(args.seed) + ".json")
+    with open(file_path, "w") as f:
+        json.dump(best_metrics_dict, f, indent=4)
+
+    print(f"Training complete. You may look for the results under: {output_path}")
 else:
     print("Best test metrics: <skipped: empty test split>")

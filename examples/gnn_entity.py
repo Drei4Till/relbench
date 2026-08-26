@@ -301,3 +301,5 @@ os.makedirs(output_path, exist_ok=True)
 file_path = os.path.join(output_path, str(args.seed) + ".json")
 with open(file_path, "w") as f:
     json.dump(best_metrics_dict, f, indent=4)
+
+print(f"Training complete. You may look for the results under: {output_path}")
