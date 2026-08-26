@@ -262,6 +262,45 @@ task.evaluate(val_pred, val_table)
 | [custom_dataset.ipynb](tutorials/custom_dataset.ipynb) | [<img align="center" src="https://colab.research.google.com/assets/colab-badge.svg" />](https://colab.research.google.com/github/snap-stanford/relbench/blob/main/tutorials/custom_dataset.ipynb)   | Use your own data in RelBench
 | [custom_task.ipynb](tutorials/custom_task.ipynb) | [<img align="center" src="https://colab.research.google.com/assets/colab-badge.svg" />](https://colab.research.google.com/github/snap-stanford/relbench/blob/main/tutorials/custom_task.ipynb)| Define your own ML tasks in RelBench
 
+# Licca Setup
+
+module load anaconda
+module load cuda/12.6.3
+
+conda create -n relbench python=3.10 -y
+conda activate relbench
+
+## RelBench + restliche Abhängigkeiten
+<!--pip install pytorch_frame relbench[full] -->
+git clone https://github.com/snap-stanford/relbench
+python -m pip install -e ".[full]"
+python -m pip install pyg-lib \
+  -f https://data.pyg.org/whl/torch-2.13.0+cu130.html
+
+## Slurm Job
+#!/bin/bash
+#SBATCH --job-name=relbench-gnn
+#SBATCH --partition=epyc-gpu
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=12:00:00
+#SBATCH --output=logs/%x_%j.out
+
+module load anaconda
+module load cuda/12.6.3
+conda activate relbench
+
+export RELBENCH_CACHE_DIR=/hpc/gpfs2/scratch/u/thomasti/relbench_cache
+export HF_HOME=/hpc/gpfs2/scratch/u/thomasti/hf_cache
+
+python gnn_entity.py \
+  --dataset rel-f1 \
+  --task driver-position \
+  --cache_dir $RELBENCH_CACHE_DIR \
+  --no-download \
+  --num_workers 4 \
+  --torch_device cuda
 
 # Contributing
 
