@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=relgt-small
+#SBATCH --job-name=relbench-small
 #SBATCH --partition=epyc-gpu
 #SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=16
