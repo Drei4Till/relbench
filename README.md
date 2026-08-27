@@ -277,31 +277,8 @@ python -m pip install -e ".[full]"
 python -m pip install pyg-lib \
   -f https://data.pyg.org/whl/torch-2.13.0+cu130.html
 
-## Slurm Job
-#!/bin/bash
-#SBATCH --job-name=relbench-gnn
-#SBATCH --partition=epyc-gpu
-#SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
-#SBATCH --time=12:00:00
-#SBATCH --output=logs/%x_%j.out
-
-module load anaconda
-module load cuda/12.6.3
-conda activate relbench
-
-export RELBENCH_CACHE_DIR=/hpc/gpfs2/scratch/u/thomasti/relbench_cache
-export HF_HOME=/hpc/gpfs2/scratch/u/thomasti/hf_cache
-
-python gnn_entity.py \
-  --dataset rel-f1 \
-  --task driver-position \
-  --cache_dir $RELBENCH_CACHE_DIR \
-  --no-download \
-  --num_workers 4 \
-  --torch_device cuda
-
+## Run Slurm Job
+sbatch --job-name=f1_driver-position run_entity.sh --dataset rel-f1 --task
 # Contributing
 
 Please check out [CONTRIBUTING.md](CONTRIBUTING.md) if you are interested in contributing datasets, tasks, bug fixes, etc. to RelBench.

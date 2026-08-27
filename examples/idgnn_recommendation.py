@@ -216,3 +216,18 @@ print(f"Best Val metrics: {val_metrics}")
 test_pred = test(loader_dict["test"])
 test_metrics = task.evaluate(test_pred)
 print(f"Best test metrics: {test_metrics}")
+
+best_metrics_dict = {
+            "args": vars(args),
+            "val_metrics": val_metrics,
+            "test_metrics": test_metrics
+        }
+
+output_path = os.path.join("results", args.dataset, args.task)
+os.makedirs(output_path, exist_ok=True)
+
+file_path = os.path.join(output_path, "idgnn", str(args.seed) + ".json")
+with open(file_path, "w") as f:
+    json.dump(best_metrics_dict, f, indent=4)
+
+print(f"Training complete. You may look for the results under: {output_path}")
