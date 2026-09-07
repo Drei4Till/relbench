@@ -62,6 +62,29 @@ is framework-agnostic — bring any modeling stack. For a reference Graph Neural
 [PyTorch Frame](https://github.com/pyg-team/pytorch-frame), see `relbench.modeling` and the
 runnable scripts in [`examples/`](examples).
 
+## Licca Setup
+
+module load anaconda
+module load cuda/12.6.3
+
+conda create -n relbench python=3.10 -y
+conda activate relbench
+<!--pip install pytorch_frame relbench[full] -->
+git clone https://github.com/snap-stanford/relbench
+python -m pip install -e ".[full]"
+python -m pip install pyg-lib \
+  -f https://data.pyg.org/whl/torch-2.13.0+cu130.html
+
+Download the datasets and tasks manually to a cache folder for offline computation on GPUs:
+export HF_HOME=/scratch/<user>/hf_cache
+mkdir -p $HF_HOME
+python -c "import relbench; relbench.load_dataset('rel-f1').load_task('driver-position')"
+Also download the TextEmbedding-Model to the cache folder:
+python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/average_word_embeddings_glove.6B.300d')"
+
+### Run Slurm Job
+sbatch --job-name=f1_driver-position run_entity.sh --dataset rel-f1 --task
+
 ### Tutorials
 
 Open these directly in Google Colab — no setup required:
