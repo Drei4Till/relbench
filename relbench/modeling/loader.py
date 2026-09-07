@@ -61,7 +61,7 @@ class SparseTensor:
         if not (indices < self.size()[0]).all():
             raise IndexError(
                 f"The index {indices.max()} is out-of-range. Needs to be smaller "
-                f"than {{self.size()[0]}}."
+                f"than {self.size()[0]}."
             )
         count = self._crow_indices[indices + 1] - self._crow_indices[indices]
         row_batch, arange = batched_arange(count)
@@ -124,7 +124,7 @@ class TimestampSampler(Sampler[int]):
 
 
 class CustomLinkDataset(Dataset):
-    r"""A custom link prediction dataset.
+    r"""A custom recommendation dataset.
 
     Sample source nodes, time, and one positive destination node.
     """
@@ -164,7 +164,7 @@ class CustomLinkDataset(Dataset):
 
 
 class LinkNeighborLoader(DataLoader):
-    r"""A custom neighbor loader for link prediction.
+    r"""A custom neighbor loader for recommendation.
     Based on https://pytorch-geometric.readthedocs.io/en/latest/_modules/torch_geometric/loader/neighbor_loader.html
 
     Args:

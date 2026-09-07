@@ -1,0 +1,105 @@
+name: Publish leaderboard entry
+
+# A maintainer approves a validated submission by adding the "accept" label (only users
+# with triage permission can label). The submission is re-validated from scratch (the
+# issue may have been edited since the last validation), the entry JSON is written to
+# leaderboard/entries/<issue>.json, leaderboard/leaderboard.json is regenerated from all
+# entries, and the issue is closed. Entries are keyed by issue number, so concurrent
+# publishes cannot conflict, and the push below rebases and retries, so runs may safely
+# overlap. Do NOT add a concurrency group here: accepting several submissions at once
+# leaves the extra runs queued, and GitHub cancels a queued run as soon as another
+# arrives, dropping those submissions.
+on:  # yamllint disable-line rule:truthy
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  publish:
+    if: >
+      github.event.label.name == 'accept' &&
+      contains(github.event.issue.labels.*.name, 'submit')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install relbench
+        run: pip install .
+
+      - name: Cache RelBench task tables
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: relbench-leaderboard-hf-cache
+
+      - name: Write issue body to file
+        env:
+          BODY: ${{ github.event.issue.body }}
+        run: printf '%s' "$BODY" > /tmp/issue_body.md
+
+      - name: Re-validate and build entry
+        run: |
+          python .github/scripts/leaderboard_submission.py \
+            --body /tmp/issue_body.md --report /tmp/report.md \
+            --entry /tmp/entry.json \
+            --issue ${{ github.event.issue.number }} \
+            --author "${{ github.event.issue.user.login }}" \
+            --created-at "${{ github.event.issue.created_at }}"
+
+      # Each attempt starts from the newest main, drops this entry file in, and rebuilds
+      # leaderboard.json from all entries. Never rebase or merge: the aggregate is a
+      # generated file and a concurrent publish conflicts in it every time.
+      - name: Commit entry
+        env:
+          ENTRY: leaderboard/entries/${{ github.event.issue.number }}.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          for i in 1 2 3 4 5 6; do
+            git fetch -q origin main
+            git reset -q --hard origin/main
+            mkdir -p leaderboard/entries
+            cp /tmp/entry.json "$ENTRY"
+            python .github/scripts/leaderboard_submission.py \
+              --rebuild leaderboard/entries --aggregate leaderboard/leaderboard.json
+            git add leaderboard/
+            if git diff --cached --quiet; then
+              echo "entry already published; nothing to do"
+              exit 0
+            fi
+            git commit -q -m "Leaderboard entry from #${{ github.event.issue.number }}"
+            git push && exit 0
+            sleep $((i * 3 + RANDOM % 5))
+          done
+          echo "push to main failed after 6 attempts" >&2
+          exit 1
+
+      - name: Close issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue close ${{ github.event.issue.number }} --repo ${{ github.repository }} \
+            --comment "Published to the leaderboard: https://star-project.stanford.edu/relbench/leaderboard/"
+
+      - name: Report failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment ${{ github.event.issue.number }} --repo ${{ github.repository }} \
+            --body-file /tmp/report.md || true
+          gh issue comment ${{ github.event.issue.number }} --repo ${{ github.repository }} \
+            --body "Publishing failed — re-validation did not pass (see the report above)." || true
+          gh issue edit ${{ github.event.issue.number }} --repo ${{ github.repository }} \
+            --remove-label accept || true

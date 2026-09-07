@@ -2,7 +2,6 @@ import argparse
 import copy
 import json
 import os
-import sys
 import warnings
 from pathlib import Path
 from typing import Dict, Tuple
@@ -19,12 +18,16 @@ from torch_geometric.loader import NeighborLoader
 from torch_geometric.seed import seed_everything
 from tqdm import tqdm
 
+from relbench import load_dataset
 from relbench.base import Dataset, RecommendationTask, TaskType
-from relbench.datasets import get_dataset
-from relbench.modeling.graph import get_link_train_table_input, make_pkey_fkey_graph
+from relbench.modeling.graph import (
+    get_link_train_table_input,
+    make_pkey_fkey_graph,
+    num_dst_nodes,
+)
 from relbench.modeling.loader import LinkNeighborLoader
 from relbench.modeling.utils import get_stype_proposal
-from relbench.tasks import get_task
+from relbench.submit import evaluate_task, write_prediction_table
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-hm")
@@ -52,12 +55,12 @@ parser.add_argument("--no-use_shallow", dest="use_shallow", action="store_false"
 parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
 parser.add_argument("--num_workers", type=int, default=0)
 parser.add_argument("--seed", type=int, default=42)
-parser.add_argument("--download", action=argparse.BooleanOptionalAction, default=True)
 parser.add_argument(
     "--cache_dir",
     type=str,
     default=os.path.expanduser("~/.cache/relbench_examples"),
 )
+parser.add_argument("--pred_dir", type=str, default="/tmp/relbench_preds")
 args = parser.parse_args()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -65,20 +68,14 @@ if torch.cuda.is_available():
     torch.set_num_threads(1)
 seed_everything(args.seed)
 
-try:
-    dataset: Dataset = get_dataset(args.dataset, download=bool(args.download))
-    task: RecommendationTask = get_task(
-        args.dataset, args.task, download=bool(args.download)
-    )
-except Exception:
-    if bool(args.download):
-        print(
-            "Download failed. If you already have the dataset cached, re-run with --no-download.",
-            file=sys.stderr,
-        )
-    raise
-tune_metric = "link_prediction_map"
-assert task.task_type == TaskType.LINK_PREDICTION
+dataset: Dataset = load_dataset(args.dataset)
+task: RecommendationTask = dataset.load_task(args.task)
+tune_metric = "map"
+assert task.task_type == TaskType.RECOMMENDATION
+
+# Dataset-level db: one cache per dataset; hidden columns are dropped after loading.
+db = dataset.get_db()
+n_dst_nodes = num_dst_nodes(db, task)
 
 stypes_cache_path = Path(f"{args.cache_dir}/{args.dataset}/stypes.json")
 try:
@@ -88,23 +85,26 @@ try:
         for col, stype_str in col_to_stype.items():
             col_to_stype[col] = stype(stype_str)
 except FileNotFoundError:
-    col_to_stype_dict = get_stype_proposal(dataset.get_db())
+    col_to_stype_dict = get_stype_proposal(db)
     Path(stypes_cache_path).parent.mkdir(parents=True, exist_ok=True)
     with open(stypes_cache_path, "w") as f:
         json.dump(col_to_stype_dict, f, indent=2, default=str)
 
 data, col_stats_dict = make_pkey_fkey_graph(
-    dataset.get_db(),
+    db,
     col_to_stype_dict=col_to_stype_dict,
     text_embedder_cfg=TextEmbedderConfig(
-        text_embedder=GloveTextEmbedding(device=device), batch_size=256
+        text_embedder=GloveTextEmbedding(device="cpu"), batch_size=256
     ),
     cache_dir=f"{args.cache_dir}/{args.dataset}/materialized",
+    remove_columns=task.hidden_columns(),
 )
 
 num_neighbors = [int(args.num_neighbors // 2**i) for i in range(args.num_layers)]
 
-train_table_input = get_link_train_table_input(task.get_table("train"), task)
+train_table_input = get_link_train_table_input(
+    task.get_table("train"), task, n_dst_nodes
+)
 train_loader = LinkNeighborLoader(
     data=data,
     num_neighbors=num_neighbors,
@@ -148,7 +148,7 @@ for split in ["val", "test"]:
         time_attr="time",
         input_nodes=task.dst_entity_table,
         input_time=torch.full(
-            size=(task.num_dst_nodes,), fill_value=seed_time, dtype=torch.long
+            size=(n_dst_nodes,), fill_value=seed_time, dtype=torch.long
         ),
         batch_size=args.batch_size,
         shuffle=False,
@@ -250,11 +250,13 @@ def test(src_loader: NeighborLoader, dst_loader: NeighborLoader) -> np.ndarray:
 
 state_dict = None
 best_val_metric = 0
+val_table = task.get_table("val")  # hoisted: get_table is uncached
+
 for epoch in range(1, args.epochs + 1):
     train_loss = train()
-    if epoch % args.eval_epochs_interval == 0:
+    if epoch % args.eval_epochs_interval == 0 and "val" in eval_loaders_dict:
         val_pred = test(*eval_loaders_dict["val"])
-        val_metrics = task.evaluate(val_pred, task.get_table("val"))
+        val_metrics = task.evaluate(val_pred, val_table)
         print(
             f"Epoch: {epoch:02d}, Train loss: {train_loss}, "
             f"Val metrics: {val_metrics}"
@@ -271,13 +273,19 @@ else:
     warnings.warn(
         "No best checkpoint was selected (state_dict is None); evaluating with current model weights."
     )
-val_pred = test(*eval_loaders_dict["val"])
-val_metrics = task.evaluate(val_pred, task.get_table("val"))
-print(f"Best Val metrics: {val_metrics}")
+if "val" in eval_loaders_dict:
+    val_pred = test(*eval_loaders_dict["val"])
+    val_metrics = task.evaluate(val_pred, val_table)
+    print(f"Best Val metrics: {val_metrics}")
+else:
+    print("Best Val metrics: <skipped: empty val split>")
 
 if "test" in eval_loaders_dict:
     test_pred = test(*eval_loaders_dict["test"])
-    test_metrics = task.evaluate(test_pred, task.get_table("test"))
+    os.makedirs(args.pred_dir, exist_ok=True)
+    pred_path = os.path.join(args.pred_dir, f"{args.dataset}__{args.task}.csv")
+    write_prediction_table(task, test_pred, pred_path)
+    test_metrics = evaluate_task(f"{args.dataset}/{args.task}", pred_path)
     print(f"Best test metrics: {test_metrics}")
     best_metrics_dict = {
             "args": vars(args),

@@ -6,13 +6,14 @@ import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 
+from .database import Database
 from .dataset import Dataset
 from .table import Table
 from .task_base import BaseTask, TaskType
 
 
 class RecommendationTask(BaseTask):
-    r"""A link prediction task on a dataset.
+    r"""A recommendation task on a dataset.
 
     Attributes:
         src_entity_col: The source entity column.
@@ -39,22 +40,34 @@ class RecommendationTask(BaseTask):
     def __init__(
         self,
         dataset: Dataset,
-        cache_dir: Optional[str] = None,
+        remove_columns: Optional[List[tuple]] = None,
     ):
         if self.num_eval_timestamps != 1:
             raise NotImplementedError(
                 "RecommendationTask currently only supports num_eval_timestamps=1."
             )
-        super().__init__(dataset, cache_dir)
+        super().__init__(dataset, remove_columns)
 
-    def filter_dangling_entities(self, table: Table) -> Table:
+    def _mask_input_cols(self, table: Table) -> Table:
+        input_cols = [c for c in (table.time_col, self.src_entity_col) if c is not None]
+        return Table(
+            df=table.df[input_cols],
+            fkey_col_to_pkey_table={self.src_entity_col: self.src_entity_table},
+            pkey_col=table.pkey_col,
+            time_col=table.time_col,
+        )
+
+    def filter_dangling_entities(self, table: Table, db: Database) -> Table:
+        num_src_nodes = len(db.table_dict[self.src_entity_table])
+        num_dst_nodes = len(db.table_dict[self.dst_entity_table])
+
         # filter dangling destination entities from a list
         table.df[self.dst_entity_col] = table.df[self.dst_entity_col].apply(
-            lambda x: [i for i in x if i < self.num_dst_nodes]
+            lambda x: [i for i in x if i < num_dst_nodes]
         )
 
         # filter dangling source entities and empty list (after above filtering)
-        filter_mask = (table.df[self.src_entity_col] >= self.num_src_nodes) | (
+        filter_mask = (table.df[self.src_entity_col] >= num_src_nodes) | (
             ~table.df[self.dst_entity_col].map(bool)
         )
 
@@ -101,14 +114,6 @@ class RecommendationTask(BaseTask):
 
         return {fn.__name__: fn(pred_isin, dst_count) for fn in metrics}
 
-    @property
-    def num_src_nodes(self) -> int:
-        return len(self.dataset.get_db().table_dict[self.src_entity_table])
-
-    @property
-    def num_dst_nodes(self) -> int:
-        return len(self.dataset.get_db().table_dict[self.dst_entity_table])
-
     def stats(self) -> Dict[str, Dict[str, int]]:
         r"""Get train / val / test table statistics for each timestamp and the whole
         table, including number of unique source entities, number of unique destination
@@ -149,13 +154,8 @@ class RecommendationTask(BaseTask):
             res[split] = split_stats
         total_df = pd.concat(
             [
-                table.df
-                for table in [
-                    self.get_table("train"),
-                    self.get_table("val"),
-                    self.get_table("test"),
-                ]
-                if table is not None
+                self.get_table(split, mask_input_cols=False).df
+                for split in ["train", "val", "test"]
             ]
         )
         num_unique_src_entities, num_unique_dst_entities, num_dst_entities, num_rows = (
@@ -168,9 +168,11 @@ class RecommendationTask(BaseTask):
             "num_rows": num_rows,
         }
         train_uniques = set(self.get_table("train").df[self.src_entity_col].unique())
-        if self.get_table("test") is None:
-            return res
-        test_uniques = set(self.get_table("test").df[self.src_entity_col].unique())
+        test_uniques = set(
+            self.get_table("test", mask_input_cols=False)
+            .df[self.src_entity_col]
+            .unique()
+        )
         ratio_train_test_entity_overlap = len(
             train_uniques.intersection(test_uniques)
         ) / len(test_uniques)

@@ -8,7 +8,6 @@ from typing import Dict
 
 import numpy as np
 import pandas as pd
-import torch
 import torch_frame
 from text_embedder import GloveTextEmbedding
 from torch_frame import stype
@@ -17,12 +16,12 @@ from torch_frame.gbdt import LightGBM
 from torch_frame.typing import Metric
 from torch_geometric.seed import seed_everything
 
+from relbench import load_dataset
 from relbench.base import Dataset, RecommendationTask, Table
-from relbench.datasets import get_dataset
 from relbench.modeling.utils import get_stype_proposal, remove_pkey_fkey
-from relbench.tasks import get_task
+from relbench.submit import evaluate_task, write_prediction_table
 
-LINK_PRED_BASELINE_TARGET_COL_NAME = "link_pred_baseline_target_column_name"
+REC_BASELINE_TARGET_COL_NAME = "rec_baseline_target_column_name"
 PRED_SCORE_COL_NAME = "pred_score_col_name"
 
 parser = argparse.ArgumentParser()
@@ -41,26 +40,29 @@ parser.add_argument(
     type=str,
     default=os.path.expanduser("~/.cache/relbench_examples"),
 )
+parser.add_argument("--pred_dir", type=str, default="/tmp/relbench_preds")
 args = parser.parse_args()
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-if torch.cuda.is_available():
-    torch.set_num_threads(1)
 seed_everything(args.seed)
 
-dataset: Dataset = get_dataset(args.dataset, download=True)
-task: RecommendationTask = get_task(args.dataset, args.task, download=True)
-target_col_name: str = LINK_PRED_BASELINE_TARGET_COL_NAME
+dataset: Dataset = load_dataset(args.dataset)
+task: RecommendationTask = dataset.load_task(args.task)
+
+# Features come from the task's view of the db; the stype cache is built per dataset.
+db = task.get_db()
+target_col_name: str = REC_BASELINE_TARGET_COL_NAME
 
 train_table = task.get_table("train")
 val_table = task.get_table("val")
 test_table = task.get_table("test")
+src_entity = list(train_table.fkey_col_to_pkey_table.keys())[0]
+dst_entity = list(train_table.fkey_col_to_pkey_table.keys())[1]
+time_col = train_table.time_col
 
 # We plan to merge train table with entity and target table to include both
 # entity and target table features during lightGBM training.
 dfs: Dict[str, pd.DataFrame] = {}
-target_dfs: Dict[str, pd.DateOffset] = {}
-db = dataset.get_db()
+
 src_entity_table = db.table_dict[task.src_entity_table]
 src_entity_df = src_entity_table.df
 dst_entity_table = db.table_dict[task.dst_entity_table]
@@ -78,6 +80,8 @@ except FileNotFoundError:
     Path(stypes_cache_path).parent.mkdir(parents=True, exist_ok=True)
     with open(stypes_cache_path, "w") as f:
         json.dump(col_to_stype_dict, f, indent=2, default=str)
+for table, col in task.hidden_columns():
+    col_to_stype_dict.get(table, {}).pop(col, None)
 
 
 # Prepare col_to_stype dictionary mapping between column names and stypes
@@ -107,6 +111,8 @@ for column_name in src_dst_intersection_column_names:
     del dst_entity_table_col_to_stype[column_name]
 col_to_stype.update(src_entity_table_col_to_stype)
 col_to_stype.update(dst_entity_table_col_to_stype)
+col_to_stype["num_past_visit"] = torch_frame.numerical
+col_to_stype["global_popularity_fraction"] = torch_frame.numerical
 col_to_stype[target_col_name] = torch_frame.categorical
 
 # randomly subsample in case training data size is too large.
@@ -126,70 +132,63 @@ def dst_entities_aggr(dst_entities):
     return topk
 
 
-def add_past_label_feature(
-    train_table_df: pd.DataFrame,
-    past_table_df: pd.DataFrame,
-) -> pd.DataFrame:
-    """Add past visit count and percentage of global popularity to train table df used
-    for lightGBM training, evaluation of testing.
+label_df = pd.concat([train_table.df, val_table.df], ignore_index=True)
+past_pairs = label_df[[time_col, src_entity, dst_entity]].explode(dst_entity)
+past_pairs[dst_entity] = past_pairs[dst_entity].astype(int)
 
-    Args:
-        evaluate_table_df (pd.DataFrame): The dataframe used for evaluation.
-        past_table_df (pd.DataFrame): The dataframe containing labels in the
-            past.
-    """
-    # Add number of past visit for each src_entity and dst_entity pair
-    # Explode the dst_entity list to get one row per (src_entity, dst_entity) pair
-    exploded_past_table = past_table_df.explode(dst_entity)
 
-    # Count occurrences of each (src_entity, dst_entity) pair
-    dst_entity_count = (
-        exploded_past_table.groupby([src_entity, dst_entity])
+def past_label_counts(keys):
+    counts = (
+        past_pairs.groupby([*keys, time_col])
         .size()
-        .reset_index(name="num_past_visit")
+        .rename("count")
+        .reset_index()
+        .sort_values(time_col, kind="stable")
     )
+    counts["count"] = counts.groupby(keys)["count"].cumsum()
+    return counts
 
-    # Merge the count information with train_table_df
-    train_table_df = train_table_df.merge(
-        dst_entity_count, how="left", on=[src_entity, dst_entity]
+
+pair_counts = past_label_counts([src_entity, dst_entity])
+dst_counts = past_label_counts([dst_entity])
+max_dst_counts = dst_counts.groupby(time_col)["count"].max().cummax().reset_index()
+
+
+def add_past_label_feature(df: pd.DataFrame) -> pd.DataFrame:
+    """Add, per row, the number of past visits of its src entity to its dst entity and
+    the dst entity's popularity relative to the most popular dst entity, both counted
+    over the label rows strictly before the row's timestamp."""
+    df = df.sort_values(time_col, kind="stable").reset_index(drop=True)
+    df[dst_entity] = df[dst_entity].astype(int)
+    df = pd.merge_asof(
+        df,
+        pair_counts.rename(columns={"count": "num_past_visit"}),
+        on=time_col,
+        by=[src_entity, dst_entity],
+        allow_exact_matches=False,
     )
-
-    # Fill NaN values with 0 (if there are any dst_entity in train_table_df not present in past_table_df)
-    train_table_df["num_past_visit"] = (
-        train_table_df["num_past_visit"].fillna(0).astype(int)
+    df = pd.merge_asof(
+        df,
+        dst_counts.rename(columns={"count": "dst_count"}),
+        on=time_col,
+        by=dst_entity,
+        allow_exact_matches=False,
     )
-
-    # Add percentage of global popularity for each dst_entity
-    # Count occurrences of each dst_entity
-    dst_entity_count = exploded_past_table[dst_entity].value_counts().reset_index()
-
-    # Calculate the fraction
-    # total_right_entities = len(exploded_past_table)
-    dst_entity_count["global_popularity_fraction"] = (
-        dst_entity_count["count"] / dst_entity_count["count"].max()
+    df = pd.merge_asof(
+        df,
+        max_dst_counts.rename(columns={"count": "max_count"}),
+        on=time_col,
+        allow_exact_matches=False,
     )
-
-    # Merge the fraction information with train_table_df
-    train_table_df = train_table_df.merge(
-        dst_entity_count[[dst_entity, "global_popularity_fraction"]],
-        how="left",
-        on=dst_entity,
-    )
-
-    # Fill NaN values with 0 (if there are any dst_entity in train_table_df not present in past_table_df)
-    train_table_df["global_popularity_fraction"] = train_table_df[
-        "global_popularity_fraction"
-    ].fillna(0)
-
-    return train_table_df
+    df["num_past_visit"] = df["num_past_visit"].fillna(0).astype(int)
+    df["global_popularity_fraction"] = (df["dst_count"] / df["max_count"]).fillna(0)
+    return df.drop(columns=["dst_count", "max_count"])
 
 
 # Prepare train/val dataset for lightGBM model training. For each src
 # entity, their corresponding dst entities are used as positive label.
 # The same number of random dst entities are sampled as negative label.
 # lightGBM will train and eval on this binary classification task.
-src_entity = list(train_table.fkey_col_to_pkey_table.keys())[0]
-dst_entity = list(train_table.fkey_col_to_pkey_table.keys())[1]
 for split, table in [
     ("train", sampled_train_table),
     ("val", val_table),
@@ -237,14 +236,13 @@ for split, table in [
         left_on=dst_entity,
         right_on=dst_entity_table.pkey_col,
     )
-    df = add_past_label_feature(df, train_table.df)
-    dfs[split] = df
+    dfs[split] = add_past_label_feature(df)
 
 
-def prepare_for_link_pred_eval(
+def prepare_for_rec_eval(
     evaluate_table_df: pd.DataFrame, past_table_df: pd.DataFrame
 ) -> pd.DataFrame:
-    """Transform evaluation dataframe into the correct format for link prediction metric
+    """Transform evaluation dataframe into the correct format for recommendation metric
     calculation.
 
     Args:
@@ -314,28 +312,20 @@ def prepare_for_link_pred_eval(
         right_on=dst_entity_table.pkey_col,
     )
 
-    evaluate_table_df = add_past_label_feature(evaluate_table_df, past_table_df)
-    return evaluate_table_df
+    return add_past_label_feature(evaluate_table_df)
 
 
-# Prepare val dataset for lightGBM model evaluation
-val_df_pred_column_names = list(val_table.df.columns)
-val_df_pred_column_names.remove(dst_entity)
-val_df_pred = val_table.df[val_df_pred_column_names]
-# Per each src entity, collect all past linked dst entities
-val_past_table_df = train_table.df
-val_past_table_df.drop(columns=[train_table.time_col], inplace=True)
-val_df_pred = prepare_for_link_pred_eval(val_df_pred, val_past_table_df)
+# Prepare val dataset for lightGBM model evaluation; the candidates per src entity
+# come from the train labels.
+val_df_pred = prepare_for_rec_eval(
+    val_table.df.drop(columns=[dst_entity]), train_table.df
+)
 dfs["val_pred"] = val_df_pred
 
-# Prepare test dataset for lightGBM model evaluation
-test_df_column_names = list(test_table.df.columns)
-test_df_column_names.remove(dst_entity)
-test_df = test_table.df[test_df_column_names]
-# Per each src entity, collect all past linked dst entities
-test_past_table_df = pd.concat([train_table.df, val_table.df], axis=0)
-test_past_table_df.drop(columns=[train_table.time_col], inplace=True)
-test_df = prepare_for_link_pred_eval(test_df, test_past_table_df)
+# Prepare test dataset for lightGBM model evaluation. The masked test table holds
+# only the time and src entity columns; the candidates come from the train and val
+# labels.
+test_df = prepare_for_rec_eval(test_table.df, label_df)
 dfs["test"] = test_df
 
 train_dataset = torch_frame.data.Dataset(
@@ -343,7 +333,7 @@ train_dataset = torch_frame.data.Dataset(
     col_to_stype=col_to_stype,
     target_col=target_col_name,
     col_to_text_embedder_cfg=TextEmbedderConfig(
-        text_embedder=GloveTextEmbedding(device=device),
+        text_embedder=GloveTextEmbedding(device="cpu"),
         batch_size=256,
     ),
 )
@@ -365,36 +355,15 @@ model = LightGBM(task_type=train_dataset.task_type, metric=tune_metric)
 model.tune(tf_train=tf_train, tf_val=tf_val, num_trials=args.num_trials)
 
 
-def evaluate(
+def predict_link(
     lightgbm_output: pd.DataFrame,
     src_entity_name: str,
     dst_entity_name: str,
     timestamp_col_name: str,
     eval_k: int,
     pred_score: float,
-    train_table: Table,
-    task: RecommendationTask,
-) -> Dict[str, float]:
-    """Given the input dataframe used for lightGBM binary link classification and its
-    output prediction scores and true labels, generate link prediction evaluation
-    metrics.
-
-    Args:
-        lightgbm_output (pd.DataFrame): The lightGBM input dataframe merged
-            with output prediction scores.
-        src_entity_name (str): The src entity name.
-        dst_entity_name (str): The dst entity name
-        timestamp_col (str): The name of the time column.
-        eval_k (int): Pre-defined eval k parameter for link pred metric
-            evaluation.
-        pred_score (float): The binary classification prediction scores.
-        train_table (Table): The train table.
-        task (RecommendationTask): The task.
-
-    Returns:
-        Dict[str, float]: The link pred metrics
-    """
-
+    target_table: Table,
+) -> np.ndarray:
     def adjust_past_dst_entities(values):
         if len(values) < eval_k:
             return values + [-1] * (eval_k - len(values))
@@ -407,21 +376,63 @@ def evaluate(
         .apply(list)
         .reset_index()
     )
-    grouped_df = train_table.df[[src_entity_name, timestamp_col_name]].merge(
+    grouped_df = target_table.df[[src_entity_name, timestamp_col_name]].merge(
         grouped_df, on=[src_entity_name, timestamp_col_name], how="left"
     )
 
     dst_entity_array = (
         grouped_df[dst_entity_name].apply(adjust_past_dst_entities).tolist()
     )
-    dst_entity_array = np.array(dst_entity_array, dtype=int)
+    return np.array(dst_entity_array, dtype=int)
+
+
+def evaluate(
+    lightgbm_output: pd.DataFrame,
+    src_entity_name: str,
+    dst_entity_name: str,
+    timestamp_col_name: str,
+    eval_k: int,
+    pred_score: float,
+    train_table: Table,
+    task: RecommendationTask,
+) -> Dict[str, float]:
+    """Given the input dataframe used for lightGBM binary link classification and its
+    output prediction scores and true labels, generate recommendation evaluation
+    metrics.
+
+    Args:
+        lightgbm_output (pd.DataFrame): The lightGBM input dataframe merged
+            with output prediction scores.
+        src_entity_name (str): The src entity name.
+        dst_entity_name (str): The dst entity name
+        timestamp_col (str): The name of the time column.
+        eval_k (int): Pre-defined eval k parameter for recommendation metric
+            evaluation.
+        pred_score (float): The binary classification prediction scores.
+        train_table (Table): The train table.
+        task (RecommendationTask): The task.
+
+    Returns:
+        Dict[str, float]: The recommendation metrics
+    """
+
+    dst_entity_array = predict_link(
+        lightgbm_output,
+        src_entity_name,
+        dst_entity_name,
+        timestamp_col_name,
+        eval_k,
+        pred_score,
+        train_table,
+    )
     metrics = task.evaluate(dst_entity_array, train_table)
     return metrics
 
 
-# NOTE: train/val metrics will be artificially high since all true links are
-# included in the candidate set
-pred = model.predict(tf_test=tf_train).numpy()
+# NOTE: the train metric is computed on the training frame, whose candidate set is
+# every true link plus as many random negatives, so it is not comparable to val/test
+# (top-k over past-visit and popularity candidates).
+pred = model.predict(tf_test=tf_train).cpu().numpy()
 lightgbm_output = dfs["train"]
 lightgbm_output[PRED_SCORE_COL_NAME] = pred
 train_metrics = evaluate(
@@ -436,7 +447,7 @@ train_metrics = evaluate(
 )
 print(f"Train: {train_metrics}")
 
-pred = model.predict(tf_test=tf_val_pred).numpy()
+pred = model.predict(tf_test=tf_val_pred).cpu().numpy()
 lightgbm_output = val_df_pred
 lightgbm_output[PRED_SCORE_COL_NAME] = pred
 val_metrics = evaluate(
@@ -452,10 +463,10 @@ val_metrics = evaluate(
 print(f"Val: {val_metrics}")
 
 
-pred = model.predict(tf_test=tf_test).numpy()
+pred = model.predict(tf_test=tf_test).cpu().numpy()
 lightgbm_output = dfs["test"]
 lightgbm_output[PRED_SCORE_COL_NAME] = pred
-test_metrics = evaluate(
+test_pred = predict_link(
     lightgbm_output,
     src_entity,
     dst_entity,
@@ -463,6 +474,9 @@ test_metrics = evaluate(
     task.eval_k,
     PRED_SCORE_COL_NAME,
     test_table,
-    task,
 )
+os.makedirs(args.pred_dir, exist_ok=True)
+pred_path = os.path.join(args.pred_dir, f"{args.dataset}__{args.task}.csv")
+write_prediction_table(task, test_pred, pred_path)
+test_metrics = evaluate_task(f"{args.dataset}/{args.task}", pred_path)
 print(f"Test: {test_metrics}")

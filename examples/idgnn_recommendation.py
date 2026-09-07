@@ -1,10 +1,11 @@
 import argparse
 import copy
 import json
+import math
 import os
 import warnings
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict
 
 import numpy as np
 import torch
@@ -16,15 +17,18 @@ from torch_frame import stype
 from torch_frame.config.text_embedder import TextEmbedderConfig
 from torch_geometric.loader import NeighborLoader
 from torch_geometric.seed import seed_everything
-from torch_geometric.typing import NodeType
 from tqdm import tqdm
 
+from relbench import load_dataset
 from relbench.base import Dataset, RecommendationTask, TaskType
-from relbench.datasets import get_dataset
-from relbench.modeling.graph import get_link_train_table_input, make_pkey_fkey_graph
+from relbench.modeling.graph import (
+    get_link_train_table_input,
+    make_pkey_fkey_graph,
+    num_dst_nodes,
+)
 from relbench.modeling.loader import SparseTensor
 from relbench.modeling.utils import get_stype_proposal
-from relbench.tasks import get_task
+from relbench.submit import evaluate_task, write_prediction_table
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-hm")
@@ -44,6 +48,7 @@ parser.add_argument("--seed", type=int, default=42)
 parser.add_argument(
     "--cache_dir", type=str, default=os.path.expanduser("~/.cache/relbench_examples")
 )
+parser.add_argument("--pred_dir", type=str, default="/tmp/relbench_preds")
 args = parser.parse_args()
 
 
@@ -52,10 +57,14 @@ if torch.cuda.is_available():
     torch.set_num_threads(1)
 seed_everything(args.seed)
 
-dataset: Dataset = get_dataset(args.dataset, download=True)
-task: RecommendationTask = get_task(args.dataset, args.task, download=True)
-tune_metric = "link_prediction_map"
-assert task.task_type == TaskType.LINK_PREDICTION
+dataset: Dataset = load_dataset(args.dataset)
+task: RecommendationTask = dataset.load_task(args.task)
+
+# Dataset-level db: one cache per dataset; hidden columns are dropped after loading.
+db = dataset.get_db()
+n_dst_nodes = num_dst_nodes(db, task)
+tune_metric = "map"
+assert task.task_type == TaskType.RECOMMENDATION
 
 stypes_cache_path = Path(f"{args.cache_dir}/{args.dataset}/stypes.json")
 try:
@@ -65,28 +74,31 @@ try:
         for col, stype_str in col_to_stype.items():
             col_to_stype[col] = stype(stype_str)
 except FileNotFoundError:
-    col_to_stype_dict = get_stype_proposal(dataset.get_db())
+    col_to_stype_dict = get_stype_proposal(db)
     Path(stypes_cache_path).parent.mkdir(parents=True, exist_ok=True)
     with open(stypes_cache_path, "w") as f:
         json.dump(col_to_stype_dict, f, indent=2, default=str)
 
 data, col_stats_dict = make_pkey_fkey_graph(
-    dataset.get_db(),
+    db,
     col_to_stype_dict=col_to_stype_dict,
     text_embedder_cfg=TextEmbedderConfig(
-        text_embedder=GloveTextEmbedding(device=device), batch_size=256
+        text_embedder=GloveTextEmbedding(device="cpu"), batch_size=256
     ),
     cache_dir=f"{args.cache_dir}/{args.dataset}/materialized",
+    remove_columns=task.hidden_columns(),
 )
 
 num_neighbors = [int(args.num_neighbors // 2**i) for i in range(args.num_layers)]
 
+val_table = task.get_table("val")  # hoisted: get_table is uncached
+
 loader_dict: Dict[str, NeighborLoader] = {}
-dst_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
 for split in ["train", "val", "test"]:
     table = task.get_table(split)
-    table_input = get_link_train_table_input(table, task)
-    dst_nodes_dict[split] = table_input.dst_nodes
+    table_input = get_link_train_table_input(table, task, n_dst_nodes)
+    if split == "train":
+        train_dst_nodes = table_input.dst_nodes[1]
     loader_dict[split] = NeighborLoader(
         data,
         num_neighbors=num_neighbors,
@@ -113,7 +125,7 @@ model = Model(
 ).to(device)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-train_sparse_tensor = SparseTensor(dst_nodes_dict["train"][1], device=device)
+train_sparse_tensor = SparseTensor(train_dst_nodes, device=device)
 
 
 def train() -> float:
@@ -181,7 +193,7 @@ def test(loader: NeighborLoader) -> np.ndarray:
             .flatten()
         )
         batch_size = batch[task.src_entity_table].batch_size
-        scores = torch.zeros(batch_size, task.num_dst_nodes, device=out.device)
+        scores = torch.zeros(batch_size, n_dst_nodes, device=out.device)
         scores[
             batch[task.dst_entity_table].batch, batch[task.dst_entity_table].n_id
         ] = torch.sigmoid(out)
@@ -192,29 +204,37 @@ def test(loader: NeighborLoader) -> np.ndarray:
 
 
 state_dict = None
-best_val_metric = 0
+best_val_metric = -math.inf
 for epoch in range(1, args.epochs + 1):
     train_loss = train()
     if epoch % args.eval_epochs_interval == 0:
         val_pred = test(loader_dict["val"])
-        val_metrics = task.evaluate(val_pred, task.get_table("val"))
+        val_metrics = task.evaluate(val_pred, val_table)
         print(
             f"Epoch: {epoch:02d}, Train loss: {train_loss}, "
             f"Val metrics: {val_metrics}"
         )
 
-        if val_metrics[tune_metric] > best_val_metric:
+        if val_metrics[tune_metric] >= best_val_metric:
             best_val_metric = val_metrics[tune_metric]
             state_dict = copy.deepcopy(model.state_dict())
 
 
-model.load_state_dict(state_dict)
+if state_dict is not None:
+    model.load_state_dict(state_dict)
+else:
+    warnings.warn(
+        "No best checkpoint was selected (state_dict is None); evaluating with current model weights."
+    )
 val_pred = test(loader_dict["val"])
-val_metrics = task.evaluate(val_pred, task.get_table("val"))
+val_metrics = task.evaluate(val_pred, val_table)
 print(f"Best Val metrics: {val_metrics}")
 
 test_pred = test(loader_dict["test"])
-test_metrics = task.evaluate(test_pred)
+os.makedirs(args.pred_dir, exist_ok=True)
+pred_path = os.path.join(args.pred_dir, f"{args.dataset}__{args.task}.csv")
+write_prediction_table(task, test_pred, pred_path)
+test_metrics = evaluate_task(f"{args.dataset}/{args.task}", pred_path)
 print(f"Best test metrics: {test_metrics}")
 
 best_metrics_dict = {
