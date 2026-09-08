@@ -76,14 +76,17 @@ python -m pip install pyg-lib \
   -f https://data.pyg.org/whl/torch-2.13.0+cu130.html
 
 Download the datasets and tasks manually to a cache folder for offline computation on GPUs:
+
 export HF_HOME=/scratch/<user>/hf_cache
+
 mkdir -p $HF_HOME
+
 python -c "import relbench; relbench.load_dataset('rel-f1').load_task('driver-position')"
 Also download the TextEmbedding-Model to the cache folder:
 python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/average_word_embeddings_glove.6B.300d')"
 
 ### Run Slurm Job
-sbatch --job-name=f1_driver-position run_entity.sh --dataset rel-f1 --task
+sbatch --job-name=f1_driver-position run_entity.sh --dataset rel-f1 --task driver-position
 
 ### Tutorials
 
