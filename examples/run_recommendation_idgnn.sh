@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=relb-rec-idgnn
-#SBATCH --partition=epyc-gpu
+#SBATCH --partition=epyc-gpu-test
 #SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
