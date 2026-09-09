@@ -216,8 +216,16 @@ test_pred = test(loader_dict["test"])
 os.makedirs(args.pred_dir, exist_ok=True)
 pred_path = os.path.join(args.pred_dir, f"{args.dataset}__{args.task}.csv")
 write_prediction_table(task, test_pred, pred_path)
-task_name_for_eval = os.path.basename(args.task.rstrip("/")) if os.path.sep in args.task else args.task
-test_metrics = evaluate_task(f"{args.dataset}/{task_name_for_eval}", pred_path, dataset=dataset)
+
+from relbench.submit import _build_pred_array, _supported
+import pandas as pd
+
+_supported(task)
+gt_table = task.get_table("test", mask_input_cols=False)
+pred_df = pd.read_csv(pred_path)
+pred_array = _build_pred_array(task, gt_table.df, pred_df)
+test_metrics = task.evaluate(pred_array, target_table=gt_table)
+
 print(f"Best test metrics: {test_metrics}")
 
 best_metrics_dict = {
