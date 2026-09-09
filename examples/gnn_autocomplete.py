@@ -216,5 +216,6 @@ test_pred = test(loader_dict["test"])
 os.makedirs(args.pred_dir, exist_ok=True)
 pred_path = os.path.join(args.pred_dir, f"{args.dataset}__{args.task}.csv")
 write_prediction_table(task, test_pred, pred_path)
-test_metrics = evaluate_task(f"{args.dataset}/{args.task}", pred_path)
+task_name_for_eval = os.path.basename(args.task.rstrip("/")) if os.path.sep in args.task else args.task
+test_metrics = evaluate_task(f"{args.dataset}/{task_name_for_eval}", pred_path)
 print(f"Best test metrics: {test_metrics}")

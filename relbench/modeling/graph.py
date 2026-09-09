@@ -199,10 +199,26 @@ def get_node_train_table_input(
     transform: Optional[AttachTargetTransform] = None
     if task.target_col in table.df:
         target_type = float
-        if task.task_type == TaskType.MULTICLASS_CLASSIFICATION:
+        if task.task_type == TaskType.BINARY_CLASSIFICATION:
+            if table.df[task.target_col].dtype == object:
+                target = torch.from_numpy(
+                    table.df[task.target_col]
+                    .map({"f": 0.0, "t": 1.0})
+                    .values
+                )
+            else:
+                target = torch.from_numpy(
+                    table.df[task.target_col].values.astype(float)
+                )
+        elif task.task_type == TaskType.MULTICLASS_CLASSIFICATION:
             target_type = int
-        if task.task_type == TaskType.MULTILABEL_CLASSIFICATION:
-            target = torch.from_numpy(np.stack(table.df[task.target_col].values))
+            target = torch.from_numpy(
+                table.df[task.target_col].values.astype(target_type)
+            )
+        elif task.task_type == TaskType.MULTILABEL_CLASSIFICATION:
+            target = torch.from_numpy(
+                np.stack(table.df[task.target_col].values)
+            )
         else:
             target = torch.from_numpy(
                 table.df[task.target_col].values.astype(target_type)
