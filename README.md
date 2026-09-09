@@ -89,10 +89,7 @@ python -c "from sentence_transformers import SentenceTransformer; SentenceTransf
 sbatch --job-name=f1_driver-position run_entity.sh --dataset rel-f1 --task driver-position
 
 For v2 specific tasks, the cache did not work. You can start the tasks explicitly:
-sbatch --job-name=trial_ea run_autocomplete.sh --dataset rel-trial --t
-ask /hpc/gpfs2/scratch/u/thomasti/hf_cache/hub/datasets--sta
-nford-star--relbench-v2-extra/snapshots/071cb21e698ad91537d4
-3ca6282411a6d0e78256/rel-trial/tasks/eligibilities-adult
+sbatch --job-name=trial_ea run_autocomplete.sh --dataset rel-trial --task /hpc/gpfs2/scratch/u/thomasti/hf_cache/hub/datasets--stanford-star--relbench-v2-extra/snapshots/071cb21e698ad91537d43ca6282411a6d0e78256/rel-trial/tasks/eligibilities-adult
 
 ### Tutorials
 
