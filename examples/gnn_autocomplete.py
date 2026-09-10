@@ -63,7 +63,13 @@ task: EntityTask = dataset.load_task(args.task)
 # Autocomplete keeps the rows after test_timestamp (they are the test entities), so
 # this is the full database, cached apart from the upto-test one.
 db = dataset.get_db(upto_test_timestamp=False)
-
+# Fix: redelex/CTU external tasks maskieren das Target nicht selbst (hidden_columns() leer)
+if task.target_col in db.table_dict[task.entity_table].df.columns:
+    db.table_dict[task.entity_table].df = db.table_dict[task.entity_table].df.drop(
+        columns=[task.target_col]
+    )
+    print("had to drop target column from entity table to avoid leakage")
+    
 stypes_cache_path = Path(f"{args.cache_dir}/{args.dataset}/stypes.json")
 try:
     with open(stypes_cache_path, "r") as f:
