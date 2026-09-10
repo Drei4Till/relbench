@@ -3,6 +3,7 @@ import copy
 import json
 import os
 import warnings
+import time
 from pathlib import Path
 from typing import Dict, Tuple
 
@@ -252,6 +253,7 @@ state_dict = None
 best_val_metric = 0
 val_table = task.get_table("val")  # hoisted: get_table is uncached
 
+start_time = time.perf_counter()
 for epoch in range(1, args.epochs + 1):
     train_loss = train()
     if epoch % args.eval_epochs_interval == 0 and "val" in eval_loaders_dict:
@@ -265,7 +267,7 @@ for epoch in range(1, args.epochs + 1):
         if val_metrics[tune_metric] >= best_val_metric:
             best_val_metric = val_metrics[tune_metric]
             state_dict = copy.deepcopy(model.state_dict())
-
+elapsed_time = time.perf_counter() - start_time
 
 if state_dict is not None:
     model.load_state_dict(state_dict)
@@ -290,7 +292,8 @@ if "test" in eval_loaders_dict:
     best_metrics_dict = {
             "args": vars(args),
             "val_metrics": val_metrics,
-            "test_metrics": test_metrics
+            "test_metrics": test_metrics,
+            "runtime_seconds": elapsed_time
         }
     output_path = os.path.join("results", args.dataset, args.task)
     os.makedirs(output_path, exist_ok=True)
@@ -308,7 +311,7 @@ else:
         }
     output_path = os.path.join("results", args.dataset, args.task)
     os.makedirs(output_path, exist_ok=True)
-    
+
     slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
     file_path = os.path.join(output_path, str(args.seed) + "_" + str(slurm_job_id) + ".json")
     with open(file_path, "w") as f:

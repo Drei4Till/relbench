@@ -3,6 +3,7 @@ import copy
 import json
 import math
 import os
+import time
 from pathlib import Path
 from typing import Dict
 
@@ -194,6 +195,7 @@ model = Model(
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 state_dict = None
 best_val_metric = -math.inf if higher_is_better else math.inf
+start_time = time.perf_counter()
 for epoch in range(1, args.epochs + 1):
     train_loss = train()
     val_pred = test(loader_dict["val"])
@@ -205,7 +207,7 @@ for epoch in range(1, args.epochs + 1):
     ):
         best_val_metric = val_metrics[tune_metric]
         state_dict = copy.deepcopy(model.state_dict())
-
+elapsed_time = time.perf_counter() - start_time
 
 model.load_state_dict(state_dict)
 val_pred = test(loader_dict["val"])
@@ -231,7 +233,8 @@ print(f"Best test metrics: {test_metrics}")
 best_metrics_dict = {
             "args": vars(args),
             "val_metrics": val_metrics,
-            "test_metrics": test_metrics
+            "test_metrics": test_metrics,
+            "runtime_seconds": elapsed_time
         }
 task_name = (
     os.path.basename(args.task.rstrip("/"))

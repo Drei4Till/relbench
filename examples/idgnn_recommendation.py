@@ -4,6 +4,7 @@ import json
 import math
 import os
 import warnings
+import time
 from pathlib import Path
 from typing import Dict
 
@@ -205,6 +206,7 @@ def test(loader: NeighborLoader) -> np.ndarray:
 
 state_dict = None
 best_val_metric = -math.inf
+start_time = time.perf_counter()
 for epoch in range(1, args.epochs + 1):
     train_loss = train()
     if epoch % args.eval_epochs_interval == 0:
@@ -218,7 +220,7 @@ for epoch in range(1, args.epochs + 1):
         if val_metrics[tune_metric] >= best_val_metric:
             best_val_metric = val_metrics[tune_metric]
             state_dict = copy.deepcopy(model.state_dict())
-
+elapsed_time = time.perf_counter() - start_time
 
 if state_dict is not None:
     model.load_state_dict(state_dict)
@@ -240,7 +242,8 @@ print(f"Best test metrics: {test_metrics}")
 best_metrics_dict = {
             "args": vars(args),
             "val_metrics": val_metrics,
-            "test_metrics": test_metrics
+            "test_metrics": test_metrics,
+            "runtime_seconds": elapsed_time,
         }
 
 output_path = os.path.join("results", args.dataset, args.task)
