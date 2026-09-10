@@ -69,7 +69,7 @@ if task.target_col in db.table_dict[task.entity_table].df.columns:
         columns=[task.target_col]
     )
     print("had to drop target column from entity table to avoid leakage")
-    
+
 stypes_cache_path = Path(f"{args.cache_dir}/{args.dataset}/stypes.json")
 try:
     with open(stypes_cache_path, "r") as f:
@@ -92,6 +92,7 @@ data, col_stats_dict = make_pkey_fkey_graph(
     cache_dir=f"{args.cache_dir}/{args.dataset}/materialized_full",
     remove_columns=task.hidden_columns(),
 )
+print(data["SalesOrderHeader"].tf.col_names_dict)
 
 clamp_min, clamp_max = None, None
 if task.task_type == TaskType.BINARY_CLASSIFICATION:
