@@ -308,7 +308,8 @@ else:
         }
     output_path = os.path.join("results", args.dataset, args.task)
     os.makedirs(output_path, exist_ok=True)
-
-    file_path = os.path.join(output_path, "gnn" + str(args.seed) + ".json")
+    
+    slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
+    file_path = os.path.join(output_path, str(args.seed) + "_" + str(slurm_job_id) + ".json")
     with open(file_path, "w") as f:
         json.dump(best_metrics_dict, f, indent=4)

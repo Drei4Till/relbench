@@ -233,8 +233,12 @@ best_metrics_dict = {
             "val_metrics": val_metrics,
             "test_metrics": test_metrics
         }
-
-output_path = os.path.join("results", args.dataset, args.task)
+task_name = (
+    os.path.basename(args.task.rstrip("/"))
+    if os.path.sep in args.task
+    else args.task
+)
+output_path = os.path.join("results", args.dataset, task_name)
 os.makedirs(output_path, exist_ok=True)
 
 slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
