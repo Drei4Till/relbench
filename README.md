@@ -91,6 +91,9 @@ sbatch --job-name=f1_driver-position run_entity.sh --dataset rel-f1 --task drive
 For v2 specific tasks, the cache did not work. You can start the tasks explicitly:
 sbatch --job-name=trial_ea run_autocomplete.sh --dataset rel-trial --task /hpc/gpfs2/scratch/u/thomasti/hf_cache/hub/datasets--stanford-star--relbench-v2-extra/snapshots/071cb21e698ad91537d43ca6282411a6d0e78256/rel-trial/tasks/eligibilities-adult
 
+Same for other relbench datasets/tasks:
+sbatch --job-name=adv_temp run_entity.sh --dataset ctu-adventureworks --task /hpc/gpfs2/scratch/u/thomasti/hf_cache/hub/datasets--stanford-star--redelex/snapshots/8d0868a51c53b0ef7e286fed93022b503173fba8/ctu-adventureworks/tasks/adventureworks-temporal
+
 ### Tutorials
 
 Open these directly in Google Colab — no setup required:
