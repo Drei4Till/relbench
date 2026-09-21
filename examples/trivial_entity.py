@@ -72,6 +72,8 @@ trainval_table = Table(
     time_col=train_table.time_col,
 )
 
+metrics_dict = {}
+
 if task.task_type == TaskType.REGRESSION:
     eval_name_list = [
         "global_zero",
@@ -93,6 +95,11 @@ if task.task_type == TaskType.REGRESSION:
         print(f"Train: {train_metrics}")
         print(f"Val: {val_metrics}")
         print(f"Test: {test_metrics}")
+        metrics_dict[name] = {
+            "train": train_metrics,
+            "val": val_metrics,
+            "test": test_metrics,
+        }
 
 
 elif task.task_type == TaskType.BINARY_CLASSIFICATION:
@@ -109,7 +116,24 @@ elif task.task_type == TaskType.BINARY_CLASSIFICATION:
         print(f"Train: {train_metrics}")
         print(f"Val: {val_metrics}")
         print(f"Test: {test_metrics}")
+        metrics_dict[name] = {
+            "train": train_metrics,
+            "val": val_metrics,
+            "test": test_metrics,
+        }
 
 
 else:
     raise ValueError(f"Unsupported task type: {task.task_type}")
+
+import json 
+
+output_path = os.path.join("results", args.dataset, args.task)
+os.makedirs(output_path, exist_ok=True)
+
+slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
+file_path = os.path.join(output_path, str(args.seed) + "_trivial_" + str(slurm_job_id) + ".json")
+with open(file_path, "w") as f:
+    json.dump(metrics_dict, f, indent=4)
+
+print(f"Trivial predictions complete. You may look for the results under: {output_path}")

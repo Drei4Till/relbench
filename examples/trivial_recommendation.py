@@ -93,6 +93,7 @@ def evaluate(
     pred = predict(train_table, pred_table, name)
     return task.evaluate(pred, pred_table)
 
+metrics_dict = {}
 
 eval_name_list = ["past_visit", "global_popularity"]
 for name in eval_name_list:
@@ -107,3 +108,21 @@ for name in eval_name_list:
     print(f"Train: {train_metrics}")
     print(f"Val: {val_metrics}")
     print(f"Test: {test_metrics}")
+    metrics_dict[name] = {
+        "train": train_metrics,
+        "val": val_metrics,
+        "test": test_metrics,
+    }
+
+
+import json 
+
+output_path = os.path.join("results", args.dataset, args.task)
+os.makedirs(output_path, exist_ok=True)
+
+slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
+file_path = os.path.join(output_path, str(args.seed) + "_trivial_" + str(slurm_job_id) + ".json")
+with open(file_path, "w") as f:
+    json.dump(metrics_dict, f, indent=4)
+
+print(f"Trivial predictions complete. You may look for the results under: {output_path}")
