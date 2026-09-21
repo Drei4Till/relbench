@@ -122,6 +122,7 @@ for split in ["train", "val", "test"]:
     entity_table = table_input.nodes[0]
     loader_dict[split] = NeighborLoader(
         data,
+        #important for computational efficiency: reduce the number of neighbors in deeper layers
         num_neighbors=[int(args.num_neighbors / 2**i) for i in range(args.num_layers)],
         time_attr="time",
         input_nodes=table_input.nodes,
@@ -238,6 +239,7 @@ test_metrics = task.evaluate(pred_array, target_table=gt_table)
 print(f"Best test metrics: {test_metrics}")
 
 best_metrics_dict = {
+            "model": "gnn",
             "args": vars(args),
             "val_metrics": val_metrics,
             "test_metrics": test_metrics,

@@ -9,6 +9,7 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 import torch_frame
+import time
 from text_embedder import GloveTextEmbedding
 from torch_frame import stype
 from torch_frame.config.text_embedder import TextEmbedderConfig
@@ -352,8 +353,9 @@ tf_test = train_dataset.convert_to_tensor_frame(dfs["test"])
 # tune metric for binary classification problem
 tune_metric = Metric.ROCAUC
 model = LightGBM(task_type=train_dataset.task_type, metric=tune_metric)
+start_time = time.time()
 model.tune(tf_train=tf_train, tf_val=tf_val, num_trials=args.num_trials)
-
+elapsed_time = time.time() - start_time
 
 def predict_link(
     lightgbm_output: pd.DataFrame,
@@ -480,3 +482,21 @@ pred_path = os.path.join(args.pred_dir, f"{args.dataset}__{args.task}.csv")
 write_prediction_table(task, test_pred, pred_path)
 test_metrics = evaluate_task(f"{args.dataset}/{args.task}", pred_path)
 print(f"Test: {test_metrics}")
+
+metrics_dict = {
+    "model": "lightgbm",
+    "args": vars(args),
+    "val_metrics": val_metrics,
+    "test_metrics": test_metrics,
+    "elapsed_time": elapsed_time,
+}
+
+output_path = os.path.join("results", args.dataset, args.task)
+os.makedirs(output_path, exist_ok=True)
+
+slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
+file_path = os.path.join(output_path, str(args.seed) + "_gbm_" + str(slurm_job_id) + ".json")
+with open(file_path, "w") as f:
+    json.dump(metrics_dict, f, indent=4)
+
+print(f"Training complete. You may look for the results under: {output_path}")

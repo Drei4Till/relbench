@@ -240,6 +240,7 @@ test_metrics = evaluate_task(f"{args.dataset}/{args.task}", pred_path)
 print(f"Best test metrics: {test_metrics}")
 
 best_metrics_dict = {
+            "model": "idgnn",
             "args": vars(args),
             "val_metrics": val_metrics,
             "test_metrics": test_metrics,

@@ -279,6 +279,7 @@ test_metrics = task.evaluate(pred_array, target_table=gt_table)
 print(f"Best test metrics: {test_metrics}")
 
 best_metrics_dict = {
+            "model": "gnn",
             "args": vars(args),
             "val_metrics": val_metrics,
             "test_metrics": test_metrics,
