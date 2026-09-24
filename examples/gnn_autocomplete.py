@@ -63,12 +63,6 @@ task: EntityTask = dataset.load_task(args.task)
 # Autocomplete keeps the rows after test_timestamp (they are the test entities), so
 # this is the full database, cached apart from the upto-test one.
 db = dataset.get_db(upto_test_timestamp=False)
-# Fix: redelex/CTU external tasks maskieren das Target nicht selbst (hidden_columns() leer)
-if task.target_col in db.table_dict[task.entity_table].df.columns:
-    db.table_dict[task.entity_table].df = db.table_dict[task.entity_table].df.drop(
-        columns=[task.target_col]
-    )
-    print("had to drop target column from entity table to avoid leakage")
 
 stypes_cache_path = Path(f"{args.cache_dir}/{args.dataset}/stypes.json")
 try:
@@ -82,6 +76,15 @@ except FileNotFoundError:
     Path(stypes_cache_path).parent.mkdir(parents=True, exist_ok=True)
     with open(stypes_cache_path, "w") as f:
         json.dump(col_to_stype_dict, f, indent=2, default=str)
+
+# Fix: redelex/CTU external tasks maskieren das Target nicht selbst (hidden_columns() leer)
+if task.target_col in db.table_dict[task.entity_table].df.columns and \
+   (task.entity_table, task.target_col) not in task.hidden_columns():
+    db.table_dict[task.entity_table].df = db.table_dict[task.entity_table].df.drop(
+        columns=[task.target_col]
+    )
+    col_to_stype_dict.get(task.entity_table, {}).pop(task.target_col, None)
+    print("had to drop target column from entity table to avoid leakage")
 
 data, col_stats_dict = make_pkey_fkey_graph(
     db,
