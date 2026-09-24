@@ -95,7 +95,6 @@ data, col_stats_dict = make_pkey_fkey_graph(
     cache_dir=f"{args.cache_dir}/{args.dataset}/materialized_full",
     remove_columns=task.hidden_columns(),
 )
-print(data["SalesOrderHeader"].tf.col_names_dict)
 
 clamp_min, clamp_max = None, None
 if task.task_type == TaskType.BINARY_CLASSIFICATION:
