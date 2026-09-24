@@ -3,7 +3,7 @@
 #SBATCH --partition=epyc
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
-#SBATCH --time=12:00:00
+#SBATCH --time=1:00:00
 #SBATCH --output=logs/%x_%A_%a.out
 
 # Usage: sbatch run_lightgbm.sh <entity|recommendation|autocomplete> --dataset rel-f1 --task driver-dnf [--seed 42 ...]
@@ -24,9 +24,9 @@ conda activate relbench
 echo "Loaded conda"
 
 export HF_HOME=/hpc/gpfs2/scratch/u/thomasti/hf_cache
-export HF_HUB_OFFLINE=1
+export HF_HUB_OFFLINE=0
 export SENTENCE_TRANSFORMERS_HOME=/hpc/gpfs2/scratch/u/thomasti/hf_cache
-export TRANSFORMERS_OFFLINE=1
+export TRANSFORMERS_OFFLINE=0
 
 echo "[Job ${SLURM_JOB_ID}] lightgbm_${KIND}.py Args: $@"
 
