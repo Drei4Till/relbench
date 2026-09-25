@@ -54,9 +54,12 @@ def predict(train_table: Table, pred_table: Table, name: str) -> np.ndarray:
     elif name == "random":
         pred = np.random.rand(len(pred_table))
     elif name == "majority":
+        target = train_table.df[task.target_col]
         # fix: not only 0/1 labels to handle but also e.g. 't', 'f'
-        past_target = train_table.df[task.target_col]
-        majority_label = past_target.mode().iloc[0]
+        if target.dtype == object:
+            target = target.map({"f": 0, "t": 1})
+        target = target.astype(int)
+        majority_label = int(target.mode().iloc[0])
         pred = np.full(len(pred_table), majority_label)
     else:
         raise ValueError(f"Unknown eval name called {name}.")
