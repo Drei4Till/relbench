@@ -3,7 +3,7 @@
 #SBATCH --partition=epyc
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
-#SBATCH --time=1:00:00
+#SBATCH --time=5:00:00
 #SBATCH --output=logs/%x_%A_%a.out
 
 # Usage: sbatch run_lightgbm.sh <entity|recommendation|autocomplete> --dataset rel-f1 --task driver-dnf [--seed 42 ...]
