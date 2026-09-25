@@ -150,8 +150,14 @@ train_dataset = torch_frame.data.Dataset(
         batch_size=256,
     ),
 )
+# fix for explicit task calls with path
+task_name = (
+    os.path.basename(args.task.rstrip("/"))
+    if os.path.sep in args.task
+    else args.task
+)
 path = Path(
-    f"{args.cache_dir}/{args.dataset}/tasks/{args.task}/materialized/node_train{'_join' if args.left_join_fkey else ''}.pt"
+    f"{args.cache_dir}/{args.dataset}/tasks/{task_name}/materialized/node_train{'_join' if args.left_join_fkey else ''}.pt"
 )
 path.parent.mkdir(parents=True, exist_ok=True)
 train_dataset = train_dataset.materialize(path=path)
@@ -182,9 +188,9 @@ val_metrics = task.evaluate(pred, val_table)
 
 pred = model.predict(tf_test=tf_test).cpu().numpy()
 os.makedirs(args.pred_dir, exist_ok=True)
-pred_path = os.path.join(args.pred_dir, f"{args.dataset}__{args.task}.csv")
+pred_path = os.path.join(args.pred_dir, f"{args.dataset}__{task_name}.csv")
 write_prediction_table(task, pred, pred_path)
-test_metrics = evaluate_task(f"{args.dataset}/{args.task}", pred_path)
+test_metrics = evaluate_task(f"{args.dataset}/{task_name}", pred_path)
 
 print(f"Train: {train_metrics}")
 print(f"Val: {val_metrics}")
@@ -198,7 +204,7 @@ metrics_dict = {
     "elapsed_time": elapsed_time,
 }
 
-output_path = os.path.join("results", args.dataset, args.task)
+output_path = os.path.join("results", args.dataset, task_name)
 os.makedirs(output_path, exist_ok=True)
 
 slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
