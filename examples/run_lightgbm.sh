@@ -24,9 +24,9 @@ conda activate relbench
 echo "Loaded conda"
 
 export HF_HOME=/hpc/gpfs2/scratch/u/thomasti/hf_cache
-export HF_HUB_OFFLINE=0
+export HF_HUB_OFFLINE=1
 export SENTENCE_TRANSFORMERS_HOME=/hpc/gpfs2/scratch/u/thomasti/hf_cache
-export TRANSFORMERS_OFFLINE=0
+export TRANSFORMERS_OFFLINE=1
 
 echo "[Job ${SLURM_JOB_ID}] lightgbm_${KIND}.py Args: $@"
 

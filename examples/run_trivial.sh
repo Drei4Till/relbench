@@ -24,7 +24,7 @@ conda activate relbench
 echo "Loaded conda"
 
 export HF_HOME=/hpc/gpfs2/scratch/u/thomasti/hf_cache
-export HF_HUB_OFFLINE=0
+export HF_HUB_OFFLINE=1
 
 echo "[Job ${SLURM_JOB_ID}] trivial_${KIND}.py Args: $@"
 
