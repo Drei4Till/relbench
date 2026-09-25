@@ -76,6 +76,13 @@ trainval_table = Table(
 
 metrics_dict = {}
 
+# fix for explicit task calls with path
+task_name = (
+    os.path.basename(args.task.rstrip("/"))
+    if os.path.sep in args.task
+    else args.task
+)
+
 if task.task_type == TaskType.REGRESSION:
     eval_name_list = [
         "global_zero",
@@ -90,9 +97,9 @@ if task.task_type == TaskType.REGRESSION:
         val_metrics = evaluate(train_table, val_table, name=name)
         test_pred = predict(trainval_table, test_table, name=name)
         os.makedirs(args.pred_dir, exist_ok=True)
-        pred_path = os.path.join(args.pred_dir, f"{args.dataset}__{args.task}.csv")
+        pred_path = os.path.join(args.pred_dir, f"{args.dataset}__{task_name}.csv")
         write_prediction_table(task, test_pred, pred_path)
-        test_metrics = evaluate_task(f"{args.dataset}/{args.task}", pred_path)
+        test_metrics = evaluate_task(f"{args.dataset}/{task_name}", pred_path, dataset=dataset)
         print(f"{name}:")
         print(f"Train: {train_metrics}")
         print(f"Val: {val_metrics}")
@@ -111,9 +118,9 @@ elif task.task_type == TaskType.BINARY_CLASSIFICATION:
         val_metrics = evaluate(train_table, val_table, name=name)
         test_pred = predict(trainval_table, test_table, name=name)
         os.makedirs(args.pred_dir, exist_ok=True)
-        pred_path = os.path.join(args.pred_dir, f"{args.dataset}__{args.task}.csv")
+        pred_path = os.path.join(args.pred_dir, f"{args.dataset}__{task_name}.csv")
         write_prediction_table(task, test_pred, pred_path)
-        test_metrics = evaluate_task(f"{args.dataset}/{args.task}", pred_path)
+        test_metrics = evaluate_task(f"{args.dataset}/{task_name}", pred_path, dataset=dataset)
         print(f"{name}:")
         print(f"Train: {train_metrics}")
         print(f"Val: {val_metrics}")
@@ -131,7 +138,7 @@ else:
 
 import json 
 
-output_path = os.path.join("results", args.dataset, args.task)
+output_path = os.path.join("results", args.dataset, task_name)
 os.makedirs(output_path, exist_ok=True)
 
 slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
