@@ -8,6 +8,8 @@ import pandas as pd
 from relbench import load_dataset
 from relbench.base import EntityTask, Table, TaskType
 from relbench.submit import evaluate_task, write_prediction_table
+# needed for fix with explicit task calls with path
+from relbench.submit import _build_pred_array, _supported
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-f1")
@@ -99,7 +101,13 @@ if task.task_type == TaskType.REGRESSION:
         os.makedirs(args.pred_dir, exist_ok=True)
         pred_path = os.path.join(args.pred_dir, f"{args.dataset}__{task_name}.csv")
         write_prediction_table(task, test_pred, pred_path)
-        test_metrics = evaluate_task(f"{args.dataset}/{task_name}", pred_path, dataset=dataset)
+        # fix for explicit task calls with path
+        _supported(task)
+        gt_table = task.get_table("test", mask_input_cols=False)
+        pred_df = pd.read_csv(pred_path)
+        pred_array = _build_pred_array(task, gt_table.df, pred_df)
+        test_metrics = task.evaluate(pred_array, target_table=gt_table)
+
         print(f"{name}:")
         print(f"Train: {train_metrics}")
         print(f"Val: {val_metrics}")
@@ -120,7 +128,14 @@ elif task.task_type == TaskType.BINARY_CLASSIFICATION:
         os.makedirs(args.pred_dir, exist_ok=True)
         pred_path = os.path.join(args.pred_dir, f"{args.dataset}__{task_name}.csv")
         write_prediction_table(task, test_pred, pred_path)
-        test_metrics = evaluate_task(f"{args.dataset}/{task_name}", pred_path, dataset=dataset)
+
+        # fix for explicit task calls with path
+        _supported(task)
+        gt_table = task.get_table("test", mask_input_cols=False)
+        pred_df = pd.read_csv(pred_path)
+        pred_array = _build_pred_array(task, gt_table.df, pred_df)
+        test_metrics = task.evaluate(pred_array, target_table=gt_table)
+
         print(f"{name}:")
         print(f"Train: {train_metrics}")
         print(f"Val: {val_metrics}")

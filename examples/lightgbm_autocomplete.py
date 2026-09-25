@@ -19,6 +19,8 @@ from relbench import load_dataset
 from relbench.base import EntityTask, TaskType
 from relbench.modeling.utils import get_stype_proposal, remove_pkey_fkey
 from relbench.submit import evaluate_task, write_prediction_table
+# needed for fix with explicit task calls with path
+from relbench.submit import _build_pred_array, _supported
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-f1")
@@ -190,7 +192,13 @@ pred = model.predict(tf_test=tf_test).cpu().numpy()
 os.makedirs(args.pred_dir, exist_ok=True)
 pred_path = os.path.join(args.pred_dir, f"{args.dataset}__{task_name}.csv")
 write_prediction_table(task, pred, pred_path)
-test_metrics = evaluate_task(f"{args.dataset}/{task_name}", pred_path)
+
+# fix for explicit task calls with path
+_supported(task)
+gt_table = task.get_table("test", mask_input_cols=False)
+pred_df = pd.read_csv(pred_path)
+pred_array = _build_pred_array(task, gt_table.df, pred_df)
+test_metrics = task.evaluate(pred_array, target_table=gt_table)
 
 print(f"Train: {train_metrics}")
 print(f"Val: {val_metrics}")
