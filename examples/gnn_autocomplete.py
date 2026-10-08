@@ -58,6 +58,7 @@ dataset = load_dataset(args.dataset)
 
 
 task: EntityTask = dataset.load_task(args.task)
+print(task.hidden_columns())
 
 # Dataset-level db: one cache per dataset; hidden columns are dropped after loading.
 # Autocomplete keeps the rows after test_timestamp (they are the test entities), so
